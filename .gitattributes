@@ -1,0 +1,8 @@
+# Force LF line endings for all text files. The packaged shell scripts
+# (cmd/*, manifest) run on fnOS (Linux); CRLF would break them.
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.fpk binary

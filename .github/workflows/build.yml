@@ -1,0 +1,132 @@
+name: build-fpk
+
+# Build fast-note-sync-service into a fnOS .fpk package for x86 and arm.
+# The application binary is downloaded from the upstream release, then
+# packaged with the official fnpack tool. Outputs are attached to a GitHub
+# Release on tag pushes and uploaded as workflow artifacts otherwise.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      fns_version:
+        description: 'Upstream fast-note-sync-service version (e.g. 3.5.1). Leave empty to use latest release.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: haierkeys/fast-note-sync-service
+  FNPACK_VERSION: '1.2.3'
+  FNS_BIN_NAME: fast-note-sync-service
+
+jobs:
+  build:
+    name: Build .fpk (${{ matrix.suffix }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suffix: x86
+            platform: x86
+            tarball_arch: linux-amd64
+          - suffix: arm
+            platform: arm
+            tarball_arch: linux-arm64
+
+    steps:
+      - name: Checkout package source
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream version
+        id: ver
+        run: |
+          set -eu
+          INPUT_VER="${{ github.event.inputs.fns_version }}"
+          if [ -n "${INPUT_VER}" ]; then
+            VER="${INPUT_VER}"
+          else
+            VER=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
+                  | jq -r .tag_name)
+          fi
+          # Strip a leading 'v' if present.
+          VER="${VER#v}"
+          if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then
+            echo "Could not resolve upstream version" >&2
+            exit 1
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Resolved upstream version: ${VER}"
+
+      - name: Download upstream binary
+        run: |
+          set -eu
+          VER="${{ steps.ver.outputs.version }}"
+          ASSET="fast-note-sync-service-${VER}-${{ matrix.tarball_arch }}.tar.gz"
+          URL="https://github.com/${UPSTREAM_REPO}/releases/download/${VER}/${ASSET}"
+          echo "Downloading ${URL}"
+          curl -fL --retry 3 -o fns.tar.gz "${URL}"
+          mkdir -p extract
+          tar -xzf fns.tar.gz -C extract
+          # Tarball contains ./fast-note-sync-service (and ./config/).
+          mkdir -p app
+          install -m 0755 "extract/${FNS_BIN_NAME}" "app/${FNS_BIN_NAME}"
+          ls -la "app/${FNS_BIN_NAME}"
+
+      - name: Stamp manifest (version + platform)
+        run: |
+          set -eu
+          VER="${{ steps.ver.outputs.version }}"
+          # version="..." and platform="..." lines.
+          sed -i "s|^version=.*|version=\"${VER}\"|" manifest
+          sed -i "s|^platform=.*|platform=\"${{ matrix.platform }}\"|" manifest
+          echo '--- manifest ---'
+          cat manifest
+
+      - name: Download fnpack
+        run: |
+          set -eu
+          URL="https://static2.fnnas.com/fnpack/fnpack-${FNPACK_VERSION}-linux-amd64"
+          curl -fL --retry 3 -o fnpack "${URL}"
+          chmod +x fnpack
+          ./fnpack --help | head -5
+
+      - name: Build .fpk
+        run: |
+          set -eu
+          ./fnpack build --directory .
+
+      - name: Rename package
+        id: pkg
+        run: |
+          set -eu
+          VER="${{ steps.ver.outputs.version }}"
+          OUT="fastnotesync-${VER}-${{ matrix.suffix }}.fpk"
+          mv fastnotesync.fpk "${OUT}"
+          echo "path=${OUT}" >> "$GITHUB_OUTPUT"
+          ls -la "${OUT}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpk-${{ matrix.suffix }}
+          path: ${{ steps.pkg.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach to Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Create the release if it doesn't already exist.
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --title "${TAG}" --generate-notes
+          fi
+          gh release upload "${TAG}" "${{ steps.pkg.outputs.path }}" --clobber

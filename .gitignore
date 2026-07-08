@@ -1,0 +1,4 @@
+# Build artifacts downloaded by CI — never commit binaries.
+/app/fast-note-sync-service
+*.fpk
+/.firecrawl/
