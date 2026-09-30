@@ -10,7 +10,7 @@
 fnos-pkg/
 ├── app/
 │   ├── ui/
-│   │   ├── config          # 桌面入口（端口服务，http:9000）
+│   │   ├── config          # 桌面入口（端口服务，端口取 ${wizard_port}）
 │   │   └── images/         # icon_64.png / icon_256.png
 │   └── fast-note-sync-service   # CI 下载，已 gitignore
 ├── cmd/
@@ -22,6 +22,7 @@ fnos-pkg/
 │   ├── privilege           # run-as=package，专用用户 fastnotesync
 │   └── resource            # 无额外系统资源
 ├── wizard/
+│   └── config              # 配置向导（应用设置 → 运行设置 → 高级设置：服务端口）
 ├── manifest
 ├── ICON.PNG / ICON_256.PNG
 ├── scripts/gen_icons.py    # 图标生成脚本
@@ -30,9 +31,9 @@ fnos-pkg/
 
 ## 运行模型
 
-- **访问方式**：端口服务（`service_port=9000`）。fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。
+- **访问方式**：端口服务（默认 `9000`）。端口可在「应用设置 → 运行设置 → 高级设置」中修改，桌面入口通过 `${wizard_port}` 自动跟随；fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。
 - **数据持久化**：配置 `config/config.yaml`、SQLite 数据库、上传与临时文件全部落在 `TRIM_PKGVAR`（`/vol*/@appdata/fastnotesync`），重启与升级不丢失。
-- **首启**：服务首次启动自动生成 `config/config.yaml`（含随机 `auth-token-key`），无需向导。
+- **首启**：服务首次启动自动生成 `config/config.yaml`（含随机 `auth-token-key`）；端口由配置向导写入 `config.yaml` 的 `server.http-port`。
 - **架构**：二进制与架构相关，故分 `x86`（amd64）与 `arm`（arm64）两个 `.fpk`。
 
 ## 本地复现

@@ -1,5 +1,44 @@
 #!/bin/bash
-# Runs after a config change is applied. The service hot-reloads config.yaml,
-# so no restart is orchestrated here.
+# Runs after a config change is applied. fast-note-sync-service watches its
+# config file and hot-reloads, so instead of restarting the service we rewrite
+# server.http-port and let the watcher rebind the new port.
 set -u
+
+CONFIG_FILE="${TRIM_PKGVAR}/config/config.yaml"
+
+# Validate that a value is a usable TCP port (1-65535).
+is_valid_port() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# Resolve the HTTP port: wizard/config value first, then the manifest port,
+# finally the built-in default.
+resolve_port() {
+  PORT="${wizard_port:-}"
+  if ! is_valid_port "$PORT"; then
+    PORT="${TRIM_SERVICE_PORT:-9000}"
+  fi
+  if ! is_valid_port "$PORT"; then
+    PORT="9000"
+  fi
+}
+
+# Point server.http-port in config.yaml at the resolved port.
+apply_config_port() {
+  [ -f "$CONFIG_FILE" ] || return 0
+  grep -q '^[[:space:]]*http-port:' "$CONFIG_FILE" || return 0
+
+  local current updated
+  current="$(sed -n 's/^[[:space:]]*http-port:[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$CONFIG_FILE" | head -n 1)"
+  [ "$current" = ":$PORT" ] && return 0
+
+  updated="$(sed "s|^\([[:space:]]*http-port:[[:space:]]*\).*$|\1\":${PORT}\"|" "$CONFIG_FILE")"
+  printf '%s\n' "$updated" > "$CONFIG_FILE"
+}
+
+resolve_port
+apply_config_port
 exit 0
