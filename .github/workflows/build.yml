@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+      upstream_version: ${{ steps.ver.outputs.upstream_version }}
       skip: ${{ steps.ver.outputs.skip }}
     steps:
       - name: Resolve upstream version
@@ -61,24 +62,41 @@ jobs:
           INPUT_VER: ${{ github.event.inputs.fns_version }}
         run: |
           set -eu
-          # Precedence: manual input > pushed tag > upstream latest.
+          LATEST=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
+                   | jq -r .tag_name)
+          LATEST="${LATEST#v}"
+
+          # Package version: manual input > pushed tag > upstream latest.
           if [ -n "${INPUT_VER:-}" ]; then
             VER="${INPUT_VER}"
-            echo "Version source: workflow_dispatch input"
+            echo "Package version source: workflow_dispatch input"
           elif [ "${REF#refs/tags/}" != "${REF}" ]; then
             VER="${REF#refs/tags/}"
-            echo "Version source: pushed tag ${REF}"
+            echo "Package version source: pushed tag ${REF}"
           else
-            VER=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-                  | jq -r .tag_name)
-            echo "Version source: upstream latest release"
+            VER="${LATEST}"
+            echo "Package version source: upstream latest release"
           fi
           VER="${VER#v}"
           if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then
             echo "Could not resolve a version" >&2
             exit 1
           fi
+
+          # The package version can be newer than upstream (packaging-only
+          # changes bump the package so the app center offers an update).
+          # Only download upstream's tarball if it really published that tag.
+          if [ "${VER}" = "${LATEST}" ]; then
+            UP_VER="${VER}"
+          elif curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/tags/${VER}" >/dev/null 2>&1; then
+            UP_VER="${VER}"
+          else
+            UP_VER="${LATEST}"
+            echo "Upstream has no release ${VER}; packaging upstream ${UP_VER}."
+          fi
+
           echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=${UP_VER}" >> "$GITHUB_OUTPUT"
 
           # On the weekly schedule, do nothing when this version is already out.
           # -R is explicit: this job never checks the repo out, so gh cannot
@@ -94,7 +112,7 @@ jobs:
             fi
           fi
           echo "skip=${SKIP}" >> "$GITHUB_OUTPUT"
-          echo "Resolved version: ${VER} (skip=${SKIP})"
+          echo "Package version: ${VER} | upstream binary: ${UP_VER} | skip=${SKIP}"
 
   build:
     name: Build .fpk (${{ matrix.suffix }})
@@ -118,11 +136,11 @@ jobs:
 
       - name: Download upstream binary
         env:
-          VER: ${{ needs.meta.outputs.version }}
+          UP_VER: ${{ needs.meta.outputs.upstream_version }}
         run: |
           set -eu
-          ASSET="fast-note-sync-service-${VER}-${{ matrix.tarball_arch }}.tar.gz"
-          URL="https://github.com/${UPSTREAM_REPO}/releases/download/${VER}/${ASSET}"
+          ASSET="fast-note-sync-service-${UP_VER}-${{ matrix.tarball_arch }}.tar.gz"
+          URL="https://github.com/${UPSTREAM_REPO}/releases/download/${UP_VER}/${ASSET}"
           echo "Downloading ${URL}"
           curl -fL --retry 3 --retry-delay 5 -o fns.tar.gz "${URL}"
           echo "upstream tarball sha256: $(sha256sum fns.tar.gz | cut -d' ' -f1)"
@@ -243,6 +261,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VER: ${{ needs.meta.outputs.version }}
+          UP_VER: ${{ needs.meta.outputs.upstream_version }}
         run: |
           set -eu
           TAG="v${VER}"
@@ -250,18 +269,22 @@ jobs:
           if gh release view -R "${GITHUB_REPOSITORY}" "${TAG}" --json tagName --jq .tagName >/dev/null; then
             echo "Release ${TAG} already exists - refreshing assets"
           else
-            cat > notes.md <<'EOF'
-          fast-note-sync-service 打包为飞牛 fnOS 应用（x86 + arm）。
-
+            # Body is quoted-heredoc so backticks in it are not evaluated.
+            cat > body.md <<'EOF'
           - 端口 9000，单二进制内嵌前端，自带 Web 管理与鉴权
           - 数据（config.yaml、SQLite、上传文件）持久化在 `/vol*/@appdata/fastnotesync`，升级不丢失
           - 首次启动自动生成随机 `auth-token-key`
+          - 卸载时可选「保留数据」或「删除所有数据」
 
           **安装**：飞牛应用中心 → 手动安装 → 选择对应架构的 `.fpk`
           （x86_64 选 `x86`，ARM64 选 `arm`）
 
           **校验**：下载 `SHA256SUMS` 后执行 `sha256sum -c SHA256SUMS`
           EOF
+            printf 'fast-note-sync-service 打包为飞牛 fnOS 应用（x86 + arm）。\n\n本包版本 `%s`，内含上游 fast-note-sync-service `%s`。\n\n' \
+              "${VER}" "${UP_VER}" > notes.md
+            cat body.md >> notes.md
+            rm -f body.md
             gh release create -R "${GITHUB_REPOSITORY}" "${TAG}" --title "${TAG}" --notes-file notes.md
           fi
           gh release upload -R "${GITHUB_REPOSITORY}" "${TAG}" dist/*.fpk dist/SHA256SUMS --clobber
