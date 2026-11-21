@@ -2,7 +2,8 @@
 
 Renders a branded rounded-square icon with the sync/wifi arc glyph
 (matching the project's original icon.svg) at the sizes fnOS requires:
-- ICON.PNG and ICON_256.PNG  -> package root (256x256)
+- ICON.PNG                   -> package root (64x64)
+- ICON_256.PNG               -> package root (256x256)
 - app/ui/images/icon_64.png  -> 64x64
 - app/ui/images/icon_256.png -> 256x256
 """
@@ -75,8 +76,11 @@ def draw_glyph(canvas: Image.Image) -> None:
 
 
 def make(size: int, path: str) -> None:
-    canvas = rounded_gradient(size)
-    draw_glyph(canvas)
+    """Render at 4x then downsample, so small sizes keep clean edges."""
+    ss = 4
+    big = rounded_gradient(size * ss)
+    draw_glyph(big)
+    canvas = big.resize((size, size), Image.LANCZOS)
     canvas.save(path, "PNG")
     print("wrote", path, size)
 
@@ -85,7 +89,8 @@ if __name__ == "__main__":
     root = OUT
     ui = os.path.join(root, "app", "ui", "images")
     os.makedirs(ui, exist_ok=True)
-    make(256, os.path.join(root, "ICON.PNG"))
+    # fnOS requires ICON.PNG to be 64x64 and ICON_256.PNG to be 256x256.
+    make(64, os.path.join(root, "ICON.PNG"))
     make(256, os.path.join(root, "ICON_256.PNG"))
     make(64, os.path.join(ui, "icon_64.png"))
     make(256, os.path.join(ui, "icon_256.png"))

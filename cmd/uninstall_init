@@ -1,6 +1,10 @@
 #!/bin/bash
-# Runs before uninstall. Stop the service; user data in TRIM_PKGVAR is
-# removed by the system during uninstall.
+# Runs before uninstall. Stop the service so the binary can be released.
+#
+# Application data lives in TRIM_PKGVAR (-> /vol*/@appdata/{appname}) and is
+# NOT removed by the system during uninstall. wizard/uninstall asks the user
+# whether to keep or delete it, and cmd/uninstall_callback applies that
+# choice. Do not delete data here: the user has not been asked yet.
 set -u
 if [ -f "${TRIM_PKGVAR}/app.pid" ]; then
   pid="$(head -n 1 "${TRIM_PKGVAR}/app.pid" 2>/dev/null | tr -d '[:space:]')"

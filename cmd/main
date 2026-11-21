@@ -10,7 +10,7 @@
 
 set -u
 
-APPNAME="fastnotesync"
+APPNAME="${TRIM_APPNAME:-fastnotesync}"
 BIN_NAME="fast-note-sync-service"
 BIN_PATH="${TRIM_APPDEST}/${BIN_NAME}"
 
@@ -110,7 +110,7 @@ stop_app() {
   return 0
 }
 
-case "$1" in
+case "${1:-}" in
   start)
     start_app
     ;;
@@ -128,7 +128,7 @@ case "$1" in
     start_app
     ;;
   *)
-    echo "Unknown command: $1 (expected start|stop|status|restart)" > "$TRIM_TEMP_LOGFILE"
+    echo "Unknown command: ${1:-} (expected start|stop|status|restart)" > "$TRIM_TEMP_LOGFILE"
     exit 1
     ;;
 esac

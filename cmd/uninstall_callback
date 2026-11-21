@@ -1,4 +1,45 @@
 #!/bin/bash
-# Runs after uninstall cleanup. Nothing to do beyond what uninstall_init did.
+#
+# Runs after uninstall cleanup.
+#
+# fnOS keeps @appdata across uninstalls by design, so the data directory
+# survives and a reinstall would still find the old config.yaml and SQLite
+# database (i.e. the same account and password).
+#
+# wizard/uninstall asks the user whether to keep or delete that data. The
+# chosen value arrives here as the environment variable wizard_data_action.
+# Anything other than an explicit "delete" keeps the data.
+
 set -u
+
+DATA_ACTION="${wizard_data_action:-keep}"
+APPNAME="${TRIM_APPNAME:-fastnotesync}"
+DATA_DIR="${TRIM_PKGVAR:-}"
+
+echo "Uninstall: data action is '${DATA_ACTION}'."
+
+case "${DATA_ACTION}" in
+  delete)
+    if [ -z "${DATA_DIR}" ] || [ ! -d "${DATA_DIR}" ]; then
+      echo "Data directory not present, nothing to delete."
+    elif [ "$(basename "${DATA_DIR}")" != "${APPNAME}" ]; then
+      # Refuse to delete anything that is not this app's own data directory.
+      echo "Refusing to delete unexpected path: ${DATA_DIR}" > "$TRIM_TEMP_LOGFILE"
+      echo "Refusing to delete unexpected path: ${DATA_DIR}" >&2
+      exit 1
+    else
+      if rm -rf "${DATA_DIR}"; then
+        echo "Removed ${DATA_DIR}."
+      else
+        echo "Failed to remove ${DATA_DIR}." > "$TRIM_TEMP_LOGFILE"
+        echo "Failed to remove ${DATA_DIR}." >&2
+        exit 1
+      fi
+    fi
+    ;;
+  *)
+    echo "Keeping application data in ${DATA_DIR:-<unset>}."
+    ;;
+esac
+
 exit 0

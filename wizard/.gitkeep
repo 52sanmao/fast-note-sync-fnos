@@ -1,2 +1,0 @@
-# Placeholder so the wizard/ directory is tracked by git and preserved
-# through packaging. fnpack requires the wizard/ directory to exist.
