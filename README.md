@@ -39,8 +39,9 @@ fnos-pkg/
 
 ```bash
 # 1. 下载上游二进制到 app/
+# 版本号按需替换（当前跟随上游最新）
 curl -L -o fns.tar.gz \
-  https://github.com/haierkeys/fast-note-sync-service/releases/download/3.5.1/fast-note-sync-service-3.5.1-linux-amd64.tar.gz
+  https://github.com/haierkeys/fast-note-sync-service/releases/download/3.6.1/fast-note-sync-service-3.6.1-linux-amd64.tar.gz
 tar -xzf fns.tar.gz -C app/ --strip-components=1 ./fast-note-sync-service
 
 # 2. （arm 构建）把 manifest 的 platform 改为 arm，并下载 linux-arm64 包
@@ -51,4 +52,30 @@ fnpack build --directory .
 
 ## CI
 
-`.github/workflows/build.yml` 在 `ubuntu-latest` 上矩阵构建 x86 / arm 两个包，产物作为 Release 资产发布。
+`.github/workflows/build.yml` 在 `ubuntu-latest` 上矩阵构建 x86 / arm 两个包。
+
+### 触发方式
+
+| 触发 | 行为 |
+|---|---|
+| push 到 `main` | 只产出 workflow artifact，不发 Release |
+| push tag `v*` | 构建并发 Release，**tag 名即版本号** |
+| 每周一 11:00（北京时间） | 检查上游是否有新版，有则自动发 Release，已发布则整链跳过 |
+| 手动 `workflow_dispatch` | 可填 `fns_version` 指定版本，留空取上游最新 |
+
+发新版只需打 tag：
+
+```bash
+git tag v3.6.1 && git push origin v3.6.1
+```
+
+### 完整性校验
+
+- `fnpack` 二进制由 `FNPACK_VERSION` + `FNPACK_SHA256` 双重固定，校验不过即中止
+- 上游未提供 tarball 官方校验和，故构建日志会打印其 sha256，并把产物的 `SHA256SUMS` 一并发布
+
+安装前校验：
+
+```bash
+sha256sum -c SHA256SUMS
+```

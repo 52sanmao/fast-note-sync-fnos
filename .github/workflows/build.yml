@@ -2,17 +2,30 @@ name: build-fpk
 
 # Build fast-note-sync-service into a fnOS .fpk package for x86 and arm.
 # The application binary is downloaded from the upstream release, then
-# packaged with the official fnpack tool. Outputs are attached to a GitHub
-# Release on tag pushes and uploaded as workflow artifacts otherwise.
+# packaged with the official fnpack tool.
+#
+# Triggers
+#   push to main         -> build artifacts only (no Release)
+#   push tag v*          -> artifacts + Release; the tag name IS the version
+#   schedule (weekly)    -> publishes a Release only when upstream ships a new version
+#   workflow_dispatch    -> manual run, optional fns_version override
+#
+# Integrity
+#   The fnpack binary is pinned by version AND verified against a sha256.
+#   Upstream does not publish official checksums for its tarballs, so the
+#   packages we produce are published together with a SHA256SUMS file.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+  schedule:
+    # Mondays 03:00 UTC == 11:00 Asia/Shanghai
+    - cron: '0 3 * * 1'
   workflow_dispatch:
     inputs:
       fns_version:
-        description: 'Upstream fast-note-sync-service version (e.g. 3.5.1). Leave empty to use latest release.'
+        description: 'Upstream fast-note-sync-service version (e.g. 3.6.1). Leave empty to use the latest upstream release.'
         required: false
         default: ''
 
@@ -22,11 +35,64 @@ permissions:
 env:
   UPSTREAM_REPO: haierkeys/fast-note-sync-service
   FNPACK_VERSION: '1.2.3'
+  # sha256 of https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+  FNPACK_SHA256: '54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93'
   FNS_BIN_NAME: fast-note-sync-service
 
 jobs:
+  meta:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      skip: ${{ steps.ver.outputs.skip }}
+    steps:
+      - name: Resolve upstream version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          INPUT_VER: ${{ github.event.inputs.fns_version }}
+        run: |
+          set -eu
+          # Precedence: manual input > pushed tag > upstream latest.
+          if [ -n "${INPUT_VER:-}" ]; then
+            VER="${INPUT_VER}"
+            echo "Version source: workflow_dispatch input"
+          elif [ "${REF#refs/tags/}" != "${REF}" ]; then
+            VER="${REF#refs/tags/}"
+            echo "Version source: pushed tag ${REF}"
+          else
+            VER=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
+                  | jq -r .tag_name)
+            echo "Version source: upstream latest release"
+          fi
+          VER="${VER#v}"
+          if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then
+            echo "Could not resolve a version" >&2
+            exit 1
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+          # On the weekly schedule, do nothing when this version is already out.
+          SKIP=false
+          if [ "${EVENT}" = "schedule" ]; then
+            HAVE=$(gh release view "v${VER}" --json assets \
+                     --jq '[.assets[].name | select(startswith("fastnotesync-"))] | length' \
+                     2>/dev/null || echo 0)
+            if [ "${HAVE:-0}" -ge 2 ]; then
+              echo "v${VER} already published (${HAVE} packages) - skipping rebuild"
+              SKIP=true
+            fi
+          fi
+          echo "skip=${SKIP}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: ${VER} (skip=${SKIP})"
+
   build:
     name: Build .fpk (${{ matrix.suffix }})
+    needs: meta
+    if: needs.meta.outputs.skip != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,56 +109,47 @@ jobs:
       - name: Checkout package source
         uses: actions/checkout@v4
 
-      - name: Resolve upstream version
-        id: ver
-        run: |
-          set -eu
-          INPUT_VER="${{ github.event.inputs.fns_version }}"
-          if [ -n "${INPUT_VER}" ]; then
-            VER="${INPUT_VER}"
-          else
-            VER=$(curl -fsSL "https://api.github.com/repos/${UPSTREAM_REPO}/releases/latest" \
-                  | jq -r .tag_name)
-          fi
-          # Strip a leading 'v' if present.
-          VER="${VER#v}"
-          if [ -z "${VER}" ] || [ "${VER}" = "null" ]; then
-            echo "Could not resolve upstream version" >&2
-            exit 1
-          fi
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "Resolved upstream version: ${VER}"
-
       - name: Download upstream binary
+        env:
+          VER: ${{ needs.meta.outputs.version }}
         run: |
           set -eu
-          VER="${{ steps.ver.outputs.version }}"
           ASSET="fast-note-sync-service-${VER}-${{ matrix.tarball_arch }}.tar.gz"
           URL="https://github.com/${UPSTREAM_REPO}/releases/download/${VER}/${ASSET}"
           echo "Downloading ${URL}"
-          curl -fL --retry 3 -o fns.tar.gz "${URL}"
+          curl -fL --retry 3 --retry-delay 5 -o fns.tar.gz "${URL}"
+          echo "upstream tarball sha256: $(sha256sum fns.tar.gz | cut -d' ' -f1)"
+
           mkdir -p extract
           tar -xzf fns.tar.gz -C extract
-          # Tarball contains ./fast-note-sync-service (and ./config/).
+          # Do not assume the tarball layout; locate the binary.
+          BIN=$(find extract -maxdepth 3 -type f -name "${FNS_BIN_NAME}" | head -n 1 || true)
+          if [ -z "${BIN}" ]; then
+            echo "Binary '${FNS_BIN_NAME}' not found in tarball. Contents:" >&2
+            find extract -maxdepth 3 -type f >&2
+            exit 1
+          fi
           mkdir -p app
-          install -m 0755 "extract/${FNS_BIN_NAME}" "app/${FNS_BIN_NAME}"
+          install -m 0755 "${BIN}" "app/${FNS_BIN_NAME}"
           ls -la "app/${FNS_BIN_NAME}"
+          file "app/${FNS_BIN_NAME}" || true
 
       - name: Stamp manifest (version + platform)
+        env:
+          VER: ${{ needs.meta.outputs.version }}
         run: |
           set -eu
-          VER="${{ steps.ver.outputs.version }}"
-          # version="..." and platform="..." lines.
           sed -i "s|^version=.*|version=\"${VER}\"|" manifest
           sed -i "s|^platform=.*|platform=\"${{ matrix.platform }}\"|" manifest
           echo '--- manifest ---'
           cat manifest
 
-      - name: Download fnpack
+      - name: Download and verify fnpack
         run: |
           set -eu
           URL="https://static2.fnnas.com/fnpack/fnpack-${FNPACK_VERSION}-linux-amd64"
-          curl -fL --retry 3 -o fnpack "${URL}"
+          curl -fL --retry 3 --retry-delay 5 -o fnpack "${URL}"
+          echo "${FNPACK_SHA256}  fnpack" | sha256sum -c -
           chmod +x fnpack
           ./fnpack --help | head -5
 
@@ -103,9 +160,10 @@ jobs:
 
       - name: Rename package
         id: pkg
+        env:
+          VER: ${{ needs.meta.outputs.version }}
         run: |
           set -eu
-          VER="${{ steps.ver.outputs.version }}"
           OUT="fastnotesync-${VER}-${{ matrix.suffix }}.fpk"
           mv fastnotesync.fpk "${OUT}"
           echo "path=${OUT}" >> "$GITHUB_OUTPUT"
@@ -118,15 +176,53 @@ jobs:
           path: ${{ steps.pkg.outputs.path }}
           if-no-files-found: error
 
-      - name: Attach to Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  release:
+    name: Publish release
+    needs: [meta, build]
+    if: >-
+      needs.meta.outputs.skip != 'true' && (
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fpk-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate checksums
         run: |
           set -eu
-          TAG="${GITHUB_REF#refs/tags/}"
-          # Create the release if it doesn't already exist.
-          if ! gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release create "${TAG}" --title "${TAG}" --generate-notes
+          cd dist
+          ls -la
+          sha256sum ./*.fpk | sed 's| \./| |' | tee SHA256SUMS
+
+      - name: Create or update Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eu
+          TAG="v${VER}"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists - refreshing assets"
+          else
+            cat > notes.md <<'EOF'
+          fast-note-sync-service 打包为飞牛 fnOS 应用（x86 + arm）。
+
+          - 端口 9000，单二进制内嵌前端，自带 Web 管理与鉴权
+          - 数据（config.yaml、SQLite、上传文件）持久化在 `/vol*/@appdata/fastnotesync`，升级不丢失
+          - 首次启动自动生成随机 `auth-token-key`
+
+          **安装**：飞牛应用中心 → 手动安装 → 选择对应架构的 `.fpk`
+          （x86_64 选 `x86`，ARM64 选 `arm`）
+
+          **校验**：下载 `SHA256SUMS` 后执行 `sha256sum -c SHA256SUMS`
+          EOF
+            gh release create "${TAG}" --title "${TAG}" --notes-file notes.md
           fi
-          gh release upload "${TAG}" "${{ steps.pkg.outputs.path }}" --clobber
+          gh release upload "${TAG}" dist/*.fpk dist/SHA256SUMS --clobber
+          echo "Published: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
