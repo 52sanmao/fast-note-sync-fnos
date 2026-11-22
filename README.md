@@ -43,6 +43,56 @@
 - **首启**：服务首次启动自动生成 `config/config.yaml`（含随机 `auth-token-key`）；端口由配置向导写入 `config.yaml` 的 `server.http-port`。
 - **架构**：二进制与架构相关，故分 `x86`（amd64）与 `arm`（arm64）两个 `.fpk`。
 
+## 外网访问与内网穿透
+
+先给结论：**局域网内直接用 `http://NAS内网IP:9000`，不需要反向代理，也不需要穿透。** 只有「人不在家也要同步」才需要往下看。
+
+### 为什么不能把飞牛「远程访问」的地址填给 Obsidian
+
+飞牛的远程访问（FN Connect，`xxx.fnos.net`）是**给浏览器看页面**的中转：它把网页转发到你的浏览器，不向第三方应用开放端口或通道。Obsidian 的同步客户端要直连 `/api/user/sync` 的 WebSocket，走这个入口会一直提示连接失败。
+
+而授权页给出的地址，是**按你当前打开面板的地址拼出来的**（上游逻辑：`API_URL = localStorage.API_URL || window.location.origin`）。所以「从哪个地址进来，就得到哪个地址」：
+
+| 你从哪打开面板 | 授权页给出的地址 | Obsidian 能用吗 |
+|---|---|---|
+| `http://192.168.1.10:9000` | 内网地址 | 仅限内网 |
+| `https://xxx.fnos.net/...` | 飞牛中转域名 | 不能 |
+| `https://note.example.com` | 你的域名 | 任何网络都能用 |
+
+### 方式一：DDNS + IPv6（推荐，不依赖第三方）
+
+1. 飞牛「设置 → 远程访问 → DDNS」开启，挑一个域名（家里宽带有 IPv6 就够）。
+2. 路由器放行 IPv6 入站，NAS 防火墙放行本应用端口（默认 9000）。
+3. 用 `http://你的域名:9000` 打开面板，授权页给出的就是域名地址，Obsidian 填它。
+
+> 手机流量多数只有 IPv4，纯 IPv6 的场景在外网可能连不上；那就用方式二或方式三。
+
+### 方式二：内网穿透（Lucky / frp / Cloudflare Tunnel / Tailscale）
+
+要点只有两条，踩坑基本都在这：
+
+- **必须支持 WebSocket**。同步协议走 `/api/user/sync` 的 Upgrade，穿透工具不支持就会出现「面板打得开、同步连不上」。
+- 穿透要把流量送到 **本应用的端口（默认 9000）**，不是飞牛的 5666。用 Nginx / OpenResty 中转时记得带上 `Upgrade`、`Connection` 头。
+
+### 方式三：自己反向代理（有公网 IP 或已备案域名）
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:9000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;   # WebSocket 必需
+    proxy_set_header Connection "upgrade";    # WebSocket 必需
+    proxy_read_timeout 3600s;                 # 长连接不要被掐断
+}
+```
+
+反代好之后用 `https://你的域名/` 打开面板，授权页就会给出 https 地址。如果反代不在 NAS 本机，还要把它的 IP 填进 `config.yaml` 的 `server.trusted-proxies`，否则上游不信任 `X-Forwarded-*` 头。
+
+> 改过端口的话（应用设置里的「服务端口」），上面所有地址里的 9000 要换成你的新端口，Obsidian 里已填的地址也要跟着改。
+
 ## 卸载与数据
 
 飞牛 fnOS **卸载应用时默认保留 `@appdata` 数据目录**，这是系统行为，不是卸载残留。因此直接卸载再重装，仍会读到旧的 `config.yaml` 与数据库，表现为「还是原来的账号密码」。
@@ -137,3 +187,29 @@ sha256sum -c SHA256SUMS
 | 只声明实际需要的资源 | `config/resource` 为空对象 |
 | `desktop_applaunchname` 与入口 ID 一致 | 均为 `fastnotesync.main` |
 | 错误信息写入 `TRIM_TEMP_LOGFILE` | 启动失败、路径校验失败等场景均已写入 |
+
+## 上架自查（先锋开发者）
+
+对照官方《提交前自查》七条，逐条结论：
+
+| # | 官方要求 | 本包情况 |
+|---|---|---|
+| 1 | 不允许 root 权限应用 | 通过。`config/privilege` 是 `run-as: package` + 专用用户 `fastnotesync`，未申请 root，也不写系统路径 |
+| 2 | 优先接入统一网关；监听端口需有自己的鉴权，不可免鉴权访问 | 见下方「关于第 2 条」。应用自带登录口令 + 设备令牌，无免鉴权接口 |
+| 3 | `platform` 只能 x86 / arm / all，且需自测可安装可运行 | 通过。分别产出 x86 / arm 两个包（二进制与架构绑定，不能用 `all`） |
+| 4 | 有文件读写接口需校验路径，避免路径穿越 | 通过。脚本只用 `TRIM_*` 变量拼路径；`uninstall_callback` 额外校验 `basename(TRIM_PKGVAR) == appname`；笔记库路径校验由上游服务实现 |
+| 5 | 有付费内容需在介绍首行声明 | 不适用。本应用完全免费、无内购，介绍里已写明 |
+| 6 | 版本号必须三段式 `x.y.z` | 通过。CI 解析出版本号后按 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验，四段式直接构建失败 |
+| 7 | 应用名称不得以「飞牛」为前缀 | 通过。名称为 `Fast Note Sync` |
+
+### 关于第 2 条：为什么本应用必须监听端口
+
+统一网关（`/app/{appname}` + Unix Socket）是为**浏览器**设计的：它依赖 NAS 的登录态，把页面和接口转发给当前登录的用户会话。而本应用的客户端是 **Obsidian 插件**，不是浏览器 —— 它拿不到 NAS 会话，只会直连 `http://host:port/api/user/sync` 的 WebSocket。所以只能走端口服务。
+
+鉴权由应用自己完成，业务接口都要求登录态或令牌：
+
+- **Web 管理面板**：需要账号口令登录（`server.webgui-login-token-expiry`，默认绑定 IP）；
+- **同步 / API**：每台设备一个独立授权令牌（`security.auth-token-key` 派生），可随时在面板里吊销，令牌按 REST + WebSocket 全权限校验；
+- **不配置穿透时**，端口只在局域网可达，公网访问不到。
+
+

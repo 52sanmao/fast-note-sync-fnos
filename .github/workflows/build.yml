@@ -83,6 +83,14 @@ jobs:
             exit 1
           fi
 
+          # The app store only accepts 3-segment versions (x.y.z). Tags like
+          # v3.6.2.1 or v3.6.2-beta would be rejected at review time, so fail
+          # here instead of publishing a package that cannot go live.
+          if ! printf '%s' "${VER}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version '${VER}' is not x.y.z; fnOS only accepts 3-segment numeric versions."
+            exit 1
+          fi
+
           # The package version can be newer than upstream (packaging-only
           # changes bump the package so the app center offers an update).
           # Only download upstream's tarball if it really published that tag.
