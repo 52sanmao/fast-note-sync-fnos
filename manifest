@@ -1,5 +1,5 @@
 appname="fastnotesync"
-version="3.5.1"
+version="3.6.4"
 display_name="Fast Note Sync"
 desc="高性能笔记同步服务（Obsidian Fast Note Sync）。提供多设备实时同步、Web 管理面板、REST API 与原生 MCP 支持。"
 maintainer="52sanmao"
@@ -15,4 +15,4 @@ disable_authorization_path=true
 os_min_version="1.1.3100"
 desktop_uidir="ui"
 desktop_applaunchname="fastnotesync.main"
-changelog="桌面入口改为访问方式引导页：内网提示授权地址仅内网可用，飞牛远程入口提示不开放第三方穿透，外网域名提示可跨网使用。"
+changelog="修复桌面图标打开报「Not Found API」：入口误带了 9000 端口，请求被发到应用服务而不是引导页。现在按当前访问的 origin 判断内网 / 飞牛远程 / 外网，并给出对应提示。"
