@@ -10,7 +10,7 @@
 .
 ├── app/
 │   ├── ui/
-│   │   ├── config          # 桌面入口（端口服务，端口取 ${wizard_port}）
+│   │   ├── config          # 桌面入口（iframe，端口与 config.yaml 同步）
 │   │   └── images/         # icon_64.png / icon_256.png
 │   └── fast-note-sync-service   # CI 下载，已 gitignore
 ├── cmd/                    # 生命周期脚本（均带可执行位）
@@ -38,10 +38,12 @@
 
 ## 运行模型
 
-- **访问方式**：端口服务（默认 `9000`）。端口可在「应用设置 → 运行设置 → 高级设置」中修改，桌面入口通过 `${wizard_port}` 自动跟随；fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。
+- **访问方式**：端口服务（默认 `9000`）。端口可在「应用设置 → 运行设置 → 高级设置」中修改：保存后写进 `config.yaml` 的 `server.http-port`，同时把 `ui/config` 里桌面入口的端口改掉，然后重启服务。`config.yaml` 是端口的唯一来源，开机自启和升级都不会把它改回 9000。fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。
 - **数据持久化**：配置 `config/config.yaml`、SQLite 数据库、上传与临时文件全部落在 `TRIM_PKGVAR`（`/vol*/@appdata/fastnotesync`），重启与升级不丢失。
 - **首启**：服务首次启动自动生成 `config/config.yaml`（含随机 `auth-token-key`）；端口由配置向导写入 `config.yaml` 的 `server.http-port`。
 - **架构**：二进制与架构相关，故分 `x86`（amd64）与 `arm`（arm64）两个 `.fpk`。
+
+> 改端口后如果桌面图标还指向老端口，是应用中心缓存了入口；在 NAS 上执行 `sudo systemctl restart trim_app_center.service`（或重开应用）刷新即可。
 
 ## 外网访问与内网穿透
 
@@ -146,6 +148,8 @@ fnpack build --directory .
 ```bash
 git tag v3.6.2 && git push origin v3.6.2
 ```
+
+> 版本号必须是三段式 `x.y.z`（应用商店不接受四段式或带后缀）。工作流解析出版本号后会按 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验，不符合直接构建失败。
 
 ### 打包工具与签名
 

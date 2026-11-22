@@ -4,4 +4,8 @@
 # config/config.yaml and storage/ on first start.
 set -u
 mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
+
+# A reinstall keeps @appdata, so config.yaml may already hold a custom port.
+# Repoint the freshly packaged desktop entry at it.
+"${TRIM_APPDEST}/cmd/main" sync-entry >/dev/null 2>&1 || true
 exit 0

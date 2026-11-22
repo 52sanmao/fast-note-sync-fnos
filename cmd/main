@@ -42,6 +42,35 @@ config_port() {
     | head -n 1 | sed 's/^.*://'
 }
 
+is_valid_port() {
+  case "${1:-}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# Keep the desktop entry's port in sync with config.yaml (ui/config is plain
+# JSON the app center reads when launching the icon). Needed because a port
+# changed in the app settings would otherwise leave the entry pointing at the
+# old one, and because every upgrade replaces ui/config with the packaged copy.
+sync_entry_port() {
+  local entry="${TRIM_APPDEST}/ui/config" port
+  [ -f "$entry" ] || return 0
+
+  port="$(config_port)"
+  [ -n "$port" ] || port="${TRIM_SERVICE_PORT:-9000}"
+  is_valid_port "$port" || port="9000"
+
+  grep -q "\"port\": \"${port}\"" "$entry" && return 0
+
+  if sed -i "s|\"port\": *\"[^\"]*\"|\"port\": \"${port}\"|" "$entry" 2>>"$LOG_FILE"; then
+    log_msg "Desktop entry port set to ${port}."
+  else
+    log_msg "WARN: could not update ${entry}; the desktop icon keeps its packaged port."
+  fi
+  return 0
+}
+
 status_app() {
   if [ -f "$PID_FILE" ]; then
     local pid
@@ -140,8 +169,11 @@ case "${1:-}" in
     stop_app
     start_app
     ;;
+  sync-entry)
+    sync_entry_port
+    ;;
   *)
-    echo "Unknown command: ${1:-} (expected start|stop|status|restart)" > "$TRIM_TEMP_LOGFILE"
+    echo "Unknown command: ${1:-} (expected start|stop|status|restart|sync-entry)" > "$TRIM_TEMP_LOGFILE"
     exit 1
     ;;
 esac

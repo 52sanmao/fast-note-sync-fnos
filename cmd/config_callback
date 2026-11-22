@@ -52,5 +52,8 @@ else
 fi
 
 log_msg "Settings change: http-port set to :$PORT, restarting service."
+# The desktop entry carries the port as plain text; repoint it before the
+# service comes back on the new port.
+"$MAIN" sync-entry
 "$MAIN" restart
 exit $?

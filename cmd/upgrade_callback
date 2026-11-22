@@ -13,4 +13,8 @@ if [ -f "${TRIM_PKGVAR}/app.pid" ]; then
   fi
   rm -f "${TRIM_PKGVAR}/app.pid"
 fi
+
+# The upgrade replaced ui/config with the packaged copy (port 9000); repoint it
+# at the port this instance actually uses.
+"${TRIM_APPDEST}/cmd/main" sync-entry >/dev/null 2>&1 || true
 exit 0
