@@ -191,17 +191,3 @@ git tag v3.6.7 && git push origin v3.6.7
 sha256sum -c SHA256SUMS
 ```
 
-## 与官方规范的对应关系
-
-| 官方要求 | 本包实现 |
-|---|---|
-| `ICON.PNG` 64×64、`ICON_256.PNG` 256×256，≤1024 KB | 由 `scripts/gen_icons.py` 生成，4× 超采样后缩放 |
-| `cmd/main` 处理 start/stop/status，status 以 0/3 退出 | 已实现，另支持 restart 与 sync-entry；start 幂等 |
-| 生命周期脚本需可执行 | `cmd/*` 在 git 中记录为 100755 |
-| 卸载逻辑应尊重用户数据 | `wizard/uninstall` 与 `uninstall_callback` 由用户决定去留 |
-| 不硬编码路径，使用 `TRIM_*` 变量 | 全部使用 `TRIM_APPDEST` / `TRIM_PKGVAR` / `TRIM_APPNAME` / `TRIM_TEMP_LOGFILE` |
-| 最小权限运行 | `run-as=package`，专用用户 `fastnotesync` |
-| 只声明实际需要的资源 | `config/resource` 为空对象 |
-| `desktop_applaunchname` 与入口 ID 一致 | 均为 `fastnotesync.main` |
-| 错误信息写入 `TRIM_TEMP_LOGFILE` | 启动失败、路径校验失败等场景均已写入 |
-| 版本号三段式 | CI 按 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验 |
