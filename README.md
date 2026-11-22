@@ -10,7 +10,8 @@
 .
 ├── app/
 │   ├── ui/
-│   │   ├── config          # 桌面入口（端口服务，http:9000）
+│   │   ├── config          # 桌面入口（指向 index.cgi 引导页）
+│   │   ├── index.cgi       # 引导页：按访问入口判断能否用于同步
 │   │   └── images/         # icon_64.png / icon_256.png
 │   └── fast-note-sync-service   # CI 下载，已 gitignore
 ├── cmd/                    # 生命周期脚本（均带可执行位）
@@ -37,10 +38,27 @@
 
 ## 运行模型
 
-- **访问方式**：端口服务（`service_port=9000`）。fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。
+- **访问方式**：端口服务（`service_port=9000`）。fast-note-sync-service 自带 Web 管理面板与鉴权，无需接入 NAS 登录态。桌面图标打开的是 `app/ui/index.cgi` 引导页，再由它把面板嵌进同一页面。
 - **数据持久化**：配置 `config/config.yaml`、SQLite 数据库、上传与临时文件全部落在 `TRIM_PKGVAR`（`/vol*/@appdata/fastnotesync`），重启与升级不丢失。
 - **首启**：服务首次启动自动生成 `config/config.yaml`（含随机 `auth-token-key`），无需向导。
 - **架构**：二进制与架构相关，故分 `x86`（amd64）与 `arm`（arm64）两个 `.fpk`。
+
+## 入口页与访问方式提示
+
+授权页给出的同步地址，是**按你当前打开的入口**拼出来的（上游逻辑：`API_URL = localStorage.API_URL || window.location.origin`）。所以「从哪个地址进来，就得到哪个地址」——入口错了，地址必然错。
+
+`app/ui/index.cgi` 因此不是直接跳到面板，而是先判断你从哪进来，把结论写在顶部提示条上：
+
+| 当前入口 | 判定依据 | 提示 | 面板 |
+|---|---|---|---|
+| 内网 | 主机名是私网 IP / 单段名 / `.local` / IPv6 字面量 | 黄色：授权地址仅内网可用，出门即断 | 直接内嵌在提示条下方 |
+| 飞牛远程访问 | 主机名以 `.fnos.net` 结尾 | 红色：此入口不向第三方应用开放穿透，Obsidian 会一直「连接已断开」 | 不内嵌，改为给出三条替代方案 |
+| 外网域名 | 其余（如 `fnnn.eu.cc`） | 绿色：授权地址可在任意网络使用 | 提供按钮进入面板 |
+
+两个实现细节：
+
+- CGI 入口会**忽略** `protocol` / `port`，请求沿用当前访问域名，所以 `location.hostname` 就是用户真实入口，判断无需猜。
+- 页面是 HTTPS 而服务只提供 HTTP 时，浏览器会拦截混合内容。这种情况（例如飞牛开启了 HTTPS 访问）会降级为「新窗口打开面板」，而不是留一个空白框。
 
 ## 卸载与数据
 
@@ -135,4 +153,5 @@ sha256sum -c SHA256SUMS
 | 最小权限运行 | `run-as=package`，专用用户 `fastnotesync` |
 | 只声明实际需要的资源 | `config/resource` 为空对象 |
 | `desktop_applaunchname` 与入口 ID 一致 | 均为 `fastnotesync.main` |
+| CGI 入口固定为 `/cgi/ThirdParty/{appname}/index.cgi/`，`protocol`/`port` 不参与路由 | `app/ui/config` 的 `url` 按此填写；脚本只输出固定页面，不解析请求路径，无路径注入面 |
 | 错误信息写入 `TRIM_TEMP_LOGFILE` | 启动失败、路径校验失败等场景均已写入 |
