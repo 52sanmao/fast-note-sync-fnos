@@ -14,7 +14,7 @@
 │   │   └── images/         # icon_64.png / icon_256.png
 │   └── fast-note-sync-service   # CI 下载，已 gitignore
 ├── cmd/                    # 生命周期脚本（均带可执行位）
-│   ├── main                # start / stop / status / restart
+│   ├── main                # start / stop / status / restart / sync-entry
 │   ├── install_init        # 安装前
 │   ├── install_callback    # 安装后：预创建持久数据目录
 │   ├── upgrade_init        # 升级前
@@ -202,7 +202,7 @@ sha256sum -c SHA256SUMS
 | 2 | 优先接入统一网关；监听端口需有自己的鉴权，不可免鉴权访问 | 见下方「关于第 2 条」。应用自带登录口令 + 设备令牌，无免鉴权接口 |
 | 3 | `platform` 只能 x86 / arm / all，且需自测可安装可运行 | 通过。分别产出 x86 / arm 两个包（二进制与架构绑定，不能用 `all`） |
 | 4 | 有文件读写接口需校验路径，避免路径穿越 | 通过。脚本只用 `TRIM_*` 变量拼路径；`uninstall_callback` 额外校验 `basename(TRIM_PKGVAR) == appname`；笔记库路径校验由上游服务实现 |
-| 5 | 有付费内容需在介绍首行声明 | 不适用。本应用完全免费、无内购，介绍里已写明 |
+| 5 | 有付费内容需在介绍首行声明 | 不适用。本应用完全免费、无内购、无功能限制，没有需声明的付费内容 |
 | 6 | 版本号必须三段式 `x.y.z` | 通过。CI 解析出版本号后按 `^[0-9]+\.[0-9]+\.[0-9]+$` 校验，四段式直接构建失败 |
 | 7 | 应用名称不得以「飞牛」为前缀 | 通过。名称为 `Fast Note Sync` |
 
