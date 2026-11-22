@@ -4,8 +4,9 @@
       "title": "Fast Note Sync",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
-      "protocol": "",
-      "url": "/cgi/ThirdParty/fastnotesync/index.cgi/",
+      "protocol": "http",
+      "port": "9000",
+      "url": "/",
       "allUsers": true
     }
   }
