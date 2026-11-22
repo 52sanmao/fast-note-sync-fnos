@@ -70,15 +70,14 @@
 | `https://xxx.fnos.net/...` | 飞牛中转域名 | 不可用 |
 | `https://note.example.com` | 自有域名 | 任意网络可用 |
 
-### 方式一：DDNS + IPv6
+### 方式一：DDNS + IPv6/ipv4
 
-不依赖第三方服务，家庭宽带具备 IPv6 时即可使用。
+不依赖第三方服务，家庭宽带具备 IPv6 /ipv4时即可使用。
 
 1. 在飞牛「设置 → 远程访问 → DDNS」中开启并选择一个域名。
-2. 路由器放行 IPv6 入站，NAS 防火墙放行本应用端口（默认 `9000`）。
+2. 路由器放行 IPv6/ipv4 入站，NAS 防火墙放行本应用端口（默认 `9000`）。
 3. 通过 `http://<域名>:9000` 打开面板，授权页给出的即为域名地址，填入 Obsidian 即可。
 
-> 移动网络多数仅提供 IPv4，纯 IPv6 场景在外网可能无法连接，此时应改用方式二或方式三。
 
 ### 方式二：内网穿透
 
@@ -87,24 +86,9 @@
 - **必须支持 WebSocket**。同步协议经由 `/api/user/sync` 的 Upgrade 完成，穿透工具不支持时会出现「面板可打开、同步连不上」。
 - **流量须指向本应用端口（默认 `9000`）**，而非飞牛的 `5666`。经 Nginx 或 OpenResty 中转时需携带 `Upgrade` 与 `Connection` 头。
 
-### 方式三：反向代理
 
-适用于具备公网 IP 或已完成备案域名的场景。
 
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:9000;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header Upgrade $http_upgrade;   # WebSocket 必需
-    proxy_set_header Connection "upgrade";    # WebSocket 必需
-    proxy_read_timeout 3600s;                 # 保持长连接
-}
-```
 
-配置完成后通过 `https://<域名>/` 打开面板，授权页给出的即为该 https 地址。若反向代理不在 NAS 本机，还需将其 IP 填入 `config.yaml` 的 `server.trusted-proxies`，否则上游服务不信任 `X-Forwarded-*` 头。
 
 > 若已修改服务端口，上述地址中的 `9000` 需替换为新端口，Obsidian 中已填写的地址也应同步修改。
 
