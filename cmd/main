@@ -32,39 +32,14 @@ is_running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# Validate that a value is a usable TCP port (1-65535).
-is_valid_port() {
-  case "$1" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
-}
-
-# Resolve the HTTP port: wizard/config value first, then the manifest port,
-# finally the built-in default.
-resolve_port() {
-  PORT="${wizard_port:-}"
-  if ! is_valid_port "$PORT"; then
-    PORT="${TRIM_SERVICE_PORT:-9000}"
-  fi
-  if ! is_valid_port "$PORT"; then
-    PORT="9000"
-  fi
-}
-
-# Point server.http-port in config.yaml at the resolved port. The service
-# watches this file and hot-reloads, so rewriting it also rebinds the port.
-apply_config_port() {
+# Read the HTTP port currently configured in config.yaml ("127.0.0.1:9000"
+# or ":9000" -> 9000). The file is the single source of truth: the wizard
+# writes it, this script never rewrites it, so a port chosen in the app
+# settings survives reboots and upgrades.
+config_port() {
   [ -f "$CONFIG_FILE" ] || return 0
-  grep -q '^[[:space:]]*http-port:' "$CONFIG_FILE" || return 0
-
-  local current updated
-  current="$(sed -n 's/^[[:space:]]*http-port:[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$CONFIG_FILE" | head -n 1)"
-  [ "$current" = ":$PORT" ] && return 0
-
-  updated="$(sed "s|^\([[:space:]]*http-port:[[:space:]]*\).*$|\1\":${PORT}\"|" "$CONFIG_FILE")"
-  printf '%s\n' "$updated" > "$CONFIG_FILE"
-  log_msg "Service port set to :$PORT in config.yaml."
+  sed -n 's/^[[:space:]]*http-port:[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$CONFIG_FILE" \
+    | head -n 1 | sed 's/^.*://'
 }
 
 status_app() {
@@ -93,13 +68,7 @@ start_app() {
 
   mkdir -p "$WORK_DIR"
 
-  # Align the service port with the configured value before startup. On the
-  # very first run this is a no-op (no config file yet); the file is then
-  # created by the binary and re-applied after it comes up.
-  resolve_port
-  apply_config_port
-
-  log_msg "Starting $APPNAME (work_dir=$WORK_DIR, port=:$PORT)..."
+  log_msg "Starting $APPNAME (work_dir=$WORK_DIR, port=$(config_port | grep . || echo default))..."
   # -d sets the working directory; the service auto-creates config/config.yaml
   # there (with a random auth-token-key) on first run.
   cd "$WORK_DIR" || { echo "Cannot enter $WORK_DIR" > "$TRIM_TEMP_LOGFILE"; return 1; }
@@ -116,10 +85,6 @@ start_app() {
     rm -f "$PID_FILE"
     return 1
   fi
-
-  # If config.yaml was just generated, apply the port now; the service picks
-  # it up through its config watcher.
-  apply_config_port
   return 0
 }
 

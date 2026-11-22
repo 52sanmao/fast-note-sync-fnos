@@ -1,5 +1,6 @@
 #!/bin/bash
-# Runs before a config change is applied. fast-note-sync-service watches its
-# config file and hot-reloads, so no script-side action is required.
+# Runs before an app-setting change is applied.
+# The new port is written into config.yaml and applied in config_callback
+# (which restarts the service), so there is nothing to do here.
 set -u
 exit 0

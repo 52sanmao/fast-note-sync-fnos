@@ -7,7 +7,7 @@
         "field": "wizard_port",
         "label": "服务端口",
         "initValue": "9000",
-        "description": "Fast Note Sync 的 HTTP 服务端口（默认 9000）。修改后桌面入口与后台服务会同步使用新端口。",
+        "description": "Fast Note Sync 的 HTTP 服务端口（默认 9000）。保存后会写入 config.yaml 并自动重启服务一次；桌面入口会跟着用新端口。修改端口后，Obsidian 里的同步地址需要同步改成新端口。",
         "rules": [
           {
             "required": true,

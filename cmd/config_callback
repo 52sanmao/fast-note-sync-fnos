@@ -1,44 +1,56 @@
 #!/bin/bash
-# Runs after a config change is applied. fast-note-sync-service watches its
-# config file and hot-reloads, so instead of restarting the service we rewrite
-# server.http-port and let the watcher rebind the new port.
+#
+# Runs after an app-setting change is applied.
+#
+# fast-note-sync-service reads config/config.yaml only at startup (there is no
+# file watcher), so a port change has to be written into the file and then
+# followed by a restart - otherwise the desktop entry would point at the new
+# port while the service still listens on the old one.
 set -u
 
 CONFIG_FILE="${TRIM_PKGVAR}/config/config.yaml"
+MAIN="${TRIM_APPDEST}/cmd/main"
+LOG_FILE="${TRIM_PKGVAR}/app.log"
 
-# Validate that a value is a usable TCP port (1-65535).
+log_msg() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
 is_valid_port() {
-  case "$1" in
+  case "${1:-}" in
     ''|*[!0-9]*) return 1 ;;
   esac
   [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
 }
 
-# Resolve the HTTP port: wizard/config value first, then the manifest port,
-# finally the built-in default.
-resolve_port() {
-  PORT="${wizard_port:-}"
-  if ! is_valid_port "$PORT"; then
-    PORT="${TRIM_SERVICE_PORT:-9000}"
-  fi
-  if ! is_valid_port "$PORT"; then
-    PORT="9000"
-  fi
-}
+PORT="${wizard_port:-}"
+if ! is_valid_port "$PORT"; then
+  log_msg "Settings change ignored: '${PORT}' is not a valid port."
+  exit 0
+fi
 
-# Point server.http-port in config.yaml at the resolved port.
-apply_config_port() {
-  [ -f "$CONFIG_FILE" ] || return 0
-  grep -q '^[[:space:]]*http-port:' "$CONFIG_FILE" || return 0
+if [ ! -f "$CONFIG_FILE" ]; then
+  log_msg "Settings change: ${CONFIG_FILE} does not exist yet, nothing to rewrite."
+  exit 0
+fi
 
-  local current updated
-  current="$(sed -n 's/^[[:space:]]*http-port:[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$CONFIG_FILE" | head -n 1)"
-  [ "$current" = ":$PORT" ] && return 0
+CURRENT="$(sed -n 's/^[[:space:]]*http-port:[[:space:]]*"\?\([^"]*\)"\?[[:space:]]*$/\1/p' "$CONFIG_FILE" | head -n 1)"
+if [ "$CURRENT" = ":$PORT" ]; then
+  log_msg "Settings change: port is already :$PORT, no restart needed."
+  exit 0
+fi
 
-  updated="$(sed "s|^\([[:space:]]*http-port:[[:space:]]*\).*$|\1\":${PORT}\"|" "$CONFIG_FILE")"
-  printf '%s\n' "$updated" > "$CONFIG_FILE"
-}
+TMP="$(mktemp "${CONFIG_FILE}.XXXXXX")" || exit 1
+if sed "s|^\([[:space:]]*http-port:[[:space:]]*\).*$|\1\":${PORT}\"|" "$CONFIG_FILE" > "$TMP"; then
+  # Write in place so owner and mode of config.yaml are kept.
+  cat "$TMP" > "$CONFIG_FILE"
+  rm -f "$TMP"
+else
+  rm -f "$TMP"
+  log_msg "Settings change failed: could not rewrite http-port."
+  exit 1
+fi
 
-resolve_port
-apply_config_port
-exit 0
+log_msg "Settings change: http-port set to :$PORT, restarting service."
+"$MAIN" restart
+exit $?
